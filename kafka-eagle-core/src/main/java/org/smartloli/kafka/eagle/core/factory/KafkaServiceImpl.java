@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.management.InstanceNotFoundException;
 import javax.management.MBeanServerConnection;
 import javax.management.ObjectName;
 import javax.management.remote.JMXConnector;
@@ -561,6 +562,7 @@ public class KafkaServiceImpl implements KafkaService {
 	}
 
 	private String parseBrokerServer(String clusterAlias) {
+		System.out.println(clusterAlias);
 		String brokerServer = "";
 		JSONArray brokers = JSON.parseArray(getAllBrokersInfo(clusterAlias));
 		for (Object object : brokers) {
@@ -868,6 +870,9 @@ public class KafkaServiceImpl implements KafkaService {
 
 	/** Get kafka version. */
 	private String getKafkaVersion(String host, int port, String ids, String clusterAlias) {
+//		
+//		return "0.8.2";
+//		
 		JMXConnector connector = null;
 		String version = "-";
 		String JMX = "service:jmx:rmi:///jndi/rmi://%s/jmxrmi";
@@ -882,7 +887,8 @@ public class KafkaServiceImpl implements KafkaService {
 				version = mbeanConnection.getAttribute(new ObjectName(KafkaServer8.version), KafkaServer8.value).toString();
 			}
 		} catch (Exception ex) {
-			LOG.error("Get kafka version from jmx has error, msg is " + ex.getMessage());
+			ex.printStackTrace();
+			LOG.error("Get kafka version from jmx has error, "+host+":"+port+" msg is " + ex.getMessage());
 		} finally {
 			if (connector != null) {
 				try {
@@ -1008,14 +1014,24 @@ public class KafkaServiceImpl implements KafkaService {
 		JMXConnector connector = null;
 		String JMX = "service:jmx:rmi:///jndi/rmi://%s/jmxrmi";
 		JSONArray brokers = JSON.parseArray(getAllBrokersInfo(clusterAlias));
+		System.out.println(brokers);
 		for (Object object : brokers) {
 			JSONObject broker = (JSONObject) object;
 			try {
 				JMXServiceURL jmxSeriverUrl = new JMXServiceURL(String.format(JMX, broker.getString("host") + ":" + broker.getInteger("jmxPort")));
+				System.out.println(jmxSeriverUrl.getHost());
 				// connector = JMXConnectorFactory.connect(jmxSeriverUrl);
 				connector = JMXFactoryUtils.connectWithTimeout(jmxSeriverUrl, 30, TimeUnit.SECONDS);
-				if (connector != null) {
-					break;
+				//BUG   获取到了链接，但是未正常获取logSize
+				if(null != connector){
+					MBeanServerConnection mbeanConnection = connector.getMBeanServerConnection();
+					try{
+						mbeanConnection.getAttribute(new ObjectName(String.format(KafkaServer8.logSize, topic, partitionid)), KafkaServer8.value);
+						break;
+					}catch(InstanceNotFoundException infe){
+						LOG.warn("Get kafka old version logsize has error, not found mbean on host {} msg is {}", broker.getString("host"), infe.getMessage());
+						//infe.printStackTrace();
+					}
 				}
 			} catch (Exception e) {
 				LOG.error("Get kafka old version logsize has error, msg is " + e.getMessage());
@@ -1024,6 +1040,9 @@ public class KafkaServiceImpl implements KafkaService {
 		}
 		long logSize = 0L;
 		try {
+			if(null == connector){
+				throw new RuntimeException("connector is null");
+			}
 			MBeanServerConnection mbeanConnection = connector.getMBeanServerConnection();
 			logSize = Long.parseLong(mbeanConnection.getAttribute(new ObjectName(String.format(KafkaServer8.logSize, topic, partitionid)), KafkaServer8.value).toString());
 		} catch (Exception ex) {
